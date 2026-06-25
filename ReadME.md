@@ -14,7 +14,7 @@ security alerts without human intervention:
 
 ## 🖼️ Architecture Screenshot
 
-![SOC Pipeline](screenshots/1_Full_executed_workflow.png)
+![SOC Pipeline](/Screenshots/1_Full_executed_workflow.png)
 
 Webhook → VirusTotal Enrichment → Severity Engine → LLM Analysis (Ollama) → Orchestrator → PostgreSQL Audit Log
 
@@ -84,8 +84,8 @@ See `screenshots/` folder for example results.
 
 This project demonstrates how modern Security Operations can be automated using a combination of workflow orchestration, threat intelligence, and AI.
 
-It reduces manual SOC workload by automatically triaging incoming alerts, enriching them with external threat data, and generating structured incident reports in real time.
+- It reduces manual SOC workload by automatically triaging incoming alerts, enriching them with external threat data, and generating structured incident reports in real time.
 
-The system improves response speed, consistency, and auditability by ensuring every alert is processed using the same deterministic logic and logged for future investigation.
+- The system improves response speed, consistency, and auditability by ensuring every alert is processed using the same deterministic logic and logged for future investigation.
 
-It also shows how local AI models can be safely integrated into security workflows without exposing sensitive data to external cloud services.
+- It also shows how local AI models can be safely integrated into security workflows without exposing sensitive data to external cloud services.
