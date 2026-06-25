@@ -1,0 +1,404 @@
+{
+  "name": "AgentSOC Workflow v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert-triage",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -384,
+        -48
+      ],
+      "id": "2620512d-901b-4c8d-99ba-cf0104c74761",
+      "name": "Webhook",
+      "webhookId": "58c45b69-c250-4294-982b-609247adeff9"
+    },
+    {
+      "parameters": {
+        "content": "## DONE\n1. Automated alert generator and sends to webhook\n2. Enrichment node gathers threat intel from VirusTotal\n2. Rules determine risk and actions.\n3. Ollama_Agent provides context and analyst notes.\n4. Orchestrator merges all\n5. Everything is stored in postgreDB for audit and reporting",
+        "height": 192,
+        "width": 464
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -16,
+        -352
+      ],
+      "typeVersion": 1,
+      "id": "9504dab9-6694-4ed2-9516-ecdc318fc999",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "url": "=   https://www.virustotal.com/api/v3/ip_addresses/{{$json.body.destination_ip  }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-apikey",
+              "value": "f3128526ab644509b35010123ee018e2bcb3f7998b0afd3024f257d16b546f36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -176,
+        -48
+      ],
+      "id": "ee6157a4-9b7c-4564-a6b1-7009e7e6077f",
+      "name": "Enrichment_node"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"llama3.2\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a SOC analyst. Severity and response actions have already been determined by security rules. Your task is to provide a concise analyst summary and identify likely MITRE ATT&CK techniques. Return ONLY valid JSON in this format: {\\\"summary\\\":\\\"...\\\",\\\"mitre_techniques\\\":[\\\"Txxxx\\\",\\\"Txxxx\\\"]}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Alert: {{$json.alert_name}}. Source IP: {{$json.source_ip}}. Destination IP: {{$json.destination_ip}}. Process: {{$json.process}}. VirusTotal malicious detections: {{$json.vt_malicious}}. VirusTotal suspicious detections: {{$json.vt_suspicious}}. Calculated severity: {{$json.severity}}. Calculated action: {{$json.action}}.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        -48
+      ],
+      "id": "b37505e8-cbb0-4dd7-a888-6b8b30af7a9f",
+      "name": "Ollama_Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Webhook (original alert)\nconst alert = $node[\"Webhook\"].json.body;\n\n// 2. VirusTotal enrichment\nconst vtStats =\n  $node[\"Enrichment_node\"].json.data.attributes.last_analysis_stats;\n\n// 3. Ollama output (summary + mitre only)\nconst llmRaw =\n  $node[\"Ollama_Agent\"].json.message.content;\n\n// Clean markdown if Ollama wraps JSON\nlet cleaned = llmRaw.replace(/```json|```/g, \"\").trim();\n\nlet llmResult;\n\ntry {\n  llmResult = JSON.parse(cleaned);\n} catch (e) {\n  llmResult = {\n    summary: cleaned,\n    mitre_techniques: []\n  };\n}\n\n// 4. Rule-based severity engine (ENTERPRISE LOGIC)\nlet severity;\nlet action;\nlet confidence;\n\nif (vtStats.malicious >= 15) {\n  severity = \"high\";\n  action = \"escalate\";\n  confidence = 95;\n} else if (vtStats.malicious >= 5) {\n  severity = \"medium\";\n  action = \"investigate\";\n  confidence = 80;\n} else {\n  severity = \"low\";\n  action = \"close\";\n  confidence = 60;\n}\n\n// 5. Final SOC record\nreturn [\n  {\n    json: {\n      // --- alert data ---\n      alert_id: alert.alert_id,\n      alert_name: alert.alert_name,\n      source_ip: alert.source_ip,\n      destination_ip: alert.destination_ip,\n      process: alert.process,\n      timestamp: new Date().toISOString(),\n\n      // --- enrichment ---\n      vt_malicious_votes: vtStats.malicious,\n      vt_suspicious_votes: vtStats.suspicious,\n\n      // --- rule engine output ---\n      severity,\n      action,\n      confidence,\n\n      // --- AI output (context only) ---\n      llm_summary: llmResult.summary,\n      mitre_techniques: llmResult.mitre_techniques || [],\n\n      // --- SOC decision ---\n      automated_decision:\n        severity === \"high\"\n          ? \"ESCALATE TO TIER 2\"\n          : severity === \"medium\"\n          ? \"INVESTIGATE\"\n          : \"CLOSE\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -48
+      ],
+      "id": "2ed4015d-5e21-4503-8397-0c8295e496ef",
+      "name": "Orchestrator"
+    },
+    {
+      "parameters": {
+        "jsCode": "const vt = $node[\"Enrichment_node\"].json.data.attributes.last_analysis_stats;\n\nlet severity;\nlet action;\nlet confidence;\n\nif (vt.malicious >= 15) {\n  severity = \"high\";\n  action = \"escalate\";\n  confidence = 95;\n} else if (vt.malicious >= 5) {\n  severity = \"medium\";\n  action = \"investigate\";\n  confidence = 80;\n} else {\n  severity = \"low\";\n  action = \"close\";\n  confidence = 60;\n}\n\nreturn [{\n  json: {\n    vt_malicious: vt.malicious,\n    vt_suspicious: vt.suspicious,\n    severity,\n    action,\n    confidence\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -48
+      ],
+      "id": "7d310777-03b5-4448-be2e-39bad64930bd",
+      "name": "Severity_Rating"
+    },
+    {
+      "parameters": {
+        "content": "## TO DO\n1. Risk scoring (0–100)\n2. Asset criticality weighting\n3. MITRE confidence scoring\n4. Auto ticket routing (Tier 1 / Tier 2 / IR)",
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        64,
+        240
+      ],
+      "typeVersion": 1,
+      "id": "dee91872-8792-4e69-a701-ef342917ec10",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "soc_alerts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "vt_malicious": "={{ $json.vt_malicious_votes }}",
+            "vt_suspicious": "={{ $json.vt_suspicious_votes }}",
+            "confidence": "={{ $json.confidence }}",
+            "alert_id": "={{ $json.alert_id }}",
+            "alert_name": "={{ $json.alert_name }}",
+            "destination_ip": "={{ $json.destination_ip }}",
+            "process": "={{ $json.process }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "severity": "={{ $json.severity }}",
+            "action": "={{ $json.action }}",
+            "summary": "={{ $json.llm_summary }}",
+            "created_at": "={{$now}}",
+            "source_ip": "={{ $json.source_ip }}",
+            "mitre_techniques": "={{ $json.mitre_techniques[0] }},{{ $json.mitre_techniques[1] }}",
+            "automated_decision": "={{ $json.automated_decision }}",
+            "alert_received": "={{ $('Webhook').item.json.body }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "alert_id",
+              "displayName": "alert_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alert_name",
+              "displayName": "alert_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source_ip",
+              "displayName": "source_ip",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "destination_ip",
+              "displayName": "destination_ip",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "process",
+              "displayName": "process",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vt_malicious",
+              "displayName": "vt_malicious",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vt_suspicious",
+              "displayName": "vt_suspicious",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence",
+              "displayName": "confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "automated_decision",
+              "displayName": "automated_decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "mitre_techniques",
+              "displayName": "mitre_techniques",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "alert_received",
+              "displayName": "alert_received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        656,
+        -48
+      ],
+      "id": "3ea2f13b-5474-450d-af13-cce56caa6878",
+      "name": "PostgreDB_audit_logging",
+      "credentials": {
+        "postgres": {
+          "id": "iDHC62RtKFFvh9vD",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Enrichment_node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrichment_node": {
+      "main": [
+        [
+          {
+            "node": "Severity_Rating",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama_Agent": {
+      "main": [
+        [
+          {
+            "node": "Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "PostgreDB_audit_logging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Severity_Rating": {
+      "main": [
+        [
+          {
+            "node": "Ollama_Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e2e0e2d9-0f33-4fe3-b1ac-33ba936263d6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb89a5129cca23e0ed03e30f85f717e2096393271c6572aad2b9e204c6cfd532"
+  },
+  "nodeGroups": [],
+  "id": "Uqi2hssbTdRCajvK",
+  "tags": []
+}

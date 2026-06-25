@@ -1,0 +1,14 @@
+{
+  "model": "llama3.2",
+  "stream": false,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a SOC analyst. Severity and response actions have already been determined by security rules. Your task is to provide a concise analyst summary and identify likely MITRE ATT&CK techniques. Return ONLY valid JSON in this format: {\"summary\":\"...\",\"mitre_techniques\":[\"Txxxx\",\"Txxxx\"]}"
+    },
+    {
+      "role": "user",
+      "content": "Alert: {{$json.alert_name}}. Source IP: {{$json.source_ip}}. Destination IP: {{$json.destination_ip}}. Process: {{$json.process}}. VirusTotal malicious detections: {{$json.vt_malicious}}. VirusTotal suspicious detections: {{$json.vt_suspicious}}. Calculated severity: {{$json.severity}}. Calculated action: {{$json.action}}."
+    }
+  ]
+}
